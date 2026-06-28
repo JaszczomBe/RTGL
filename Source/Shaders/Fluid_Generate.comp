@@ -81,8 +81,14 @@ ShParticleDef generateParticle( uint8_t sourceId, const vec3 rnd )
 {
     const ShParticleSourceDef src = g_sources[ sourceId ];
 
+    float ignore;
+    vec3  spawnDir = sampleOrientedHemisphere( safeNormalize4( src.velocity, vec3( 0, 0, -1 ) ).xyz,
+                                              rnd.y,
+                                              rnd.z,
+                                              ignore );
+
     ShParticleDef p;
-    p.position = src.position;
+    p.position = src.position + spawnDir * ( SmoothingRadius * 0.45 * rnd.x );
     p.velocity =
         generateVelocity( rnd, src.velocity, src.velocityDispersion, src.velocityDispersionAngle );
 

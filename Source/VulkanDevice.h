@@ -259,6 +259,12 @@ private:
 
     RgFloat3D fluidGravity{ 0, -9.8f, 0 };
     RgFloat3D fluidColor{ 1, 1, 1 };
+    uint32_t  fluidDebugMode{ 0 };
+    int32_t   fluidSmoothPasses{ -1 };
+    float     fluidParticleRadius{ 0.1f };
+    float     fluidDepthWindowScale{ 1.15f };
+    float     fluidMinDepthWindow{ 0.035f };
+    float     fluidSurfaceNormalCull{ 0.72f };
 };
 
 }

@@ -268,6 +268,11 @@ namespace detail
             .color          = { 1, 1, 1 },
             .particleBudget = 64 * 1024,
             .particleRadius = 0.1f,
+            .debugMode      = 0,
+            .smoothPasses   = -1,
+            .depthWindowScale = 1.15f,
+            .minDepthWindow = 0.035f,
+            .surfaceNormalCull = 0.72f,
         };
     };
 

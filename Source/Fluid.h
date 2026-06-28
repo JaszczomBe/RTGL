@@ -86,7 +86,8 @@ public:
                     const float*                  proj,
                     const RenderResolutionHelper& renderResolution,
                     float                         znear,
-                    float                         zfar );
+                    float                         zfar,
+                    int32_t                       smoothPasses );
 
     void OnShaderReload( const ShaderManager* shaderManager ) override;
     void OnFramebuffersSizeChange( const ResolutionState& resolutionState ) override;

@@ -819,6 +819,11 @@ typedef struct RgStartFrameFluidParams
     RgFloat3D       color;
     uint32_t        particleBudget;
     float           particleRadius;
+    uint32_t        debugMode;
+    int32_t         smoothPasses;
+    float           depthWindowScale;
+    float           minDepthWindow;
+    float           surfaceNormalCull;
 } RgStartFrameFluidParams;
 
 typedef enum RgStaticSceneStatusFlagBits

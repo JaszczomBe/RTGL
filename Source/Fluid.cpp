@@ -26,6 +26,7 @@ SOFTWARE.
 
 #include "CmdLabel.h"
 #include "CommandBufferManager.h"
+#include "DebugPrint.h"
 #include "Matrix.h"
 #include "MemoryAllocator.h"
 #include "RenderResolutionHelper.h"
@@ -37,6 +38,8 @@ SOFTWARE.
 
 #include <glm/glm.hpp>
 #include <glm/gtc/packing.hpp>
+
+#include <cstdlib>
 
 namespace RTGL1
 {
@@ -77,6 +80,17 @@ namespace
         float    zNear;
         float    zFar;
     };
+
+    bool FluidDebugLogEnabled()
+    {
+        const bool envEnabled = [] {
+            const char* env = std::getenv( "GZDOOM_RT_FLUID_DEBUG" );
+            return env && env[ 0 ] && env[ 0 ] != '0';
+        }();
+        return envEnabled ||
+               ( debug::detail::g_printSeverity & RG_MESSAGE_SEVERITY_INFO ) != 0;
+    }
+
 }
 
 uint32_t RingBuf::length() const
@@ -183,6 +197,13 @@ RTGL1::Fluid::Fluid( VkDevice                                device,
         MAX_PARTICLES = fluidBudget;
     }
 
+    if( FluidDebugLogEnabled() )
+    {
+        debug::Info( "RTGL fluid create: budget={} particleRadius={:.5f}",
+                     MAX_PARTICLES,
+                     m_particleRadius );
+    }
+
     m_particlesArray.Init( *allocator,
                            MAX_PARTICLES * sizeof( ShParticleDef ),
                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -230,6 +251,13 @@ RTGL1::Fluid::Fluid( VkDevice                                device,
 
 RTGL1::Fluid::~Fluid()
 {
+    if( FluidDebugLogEnabled() )
+    {
+        debug::Info( "RTGL fluid destroy: activeLength={} cachedSources={}",
+                     m_active.length(),
+                     m_sourcesCached.size() );
+    }
+
     vkDeviceWaitIdle( m_device );
     vkDestroyDescriptorPool( m_device, m_descPool, nullptr );
     vkDestroyDescriptorSetLayout( m_device, m_descLayout, nullptr );
@@ -245,6 +273,13 @@ void RTGL1::Fluid::PrepareForFrame( bool reset )
 {
     if( reset )
     {
+        if( FluidDebugLogEnabled() )
+        {
+            debug::Info( "RTGL fluid reset: activeLength={} cachedSources={}",
+                         m_active.length(),
+                         m_sourcesCached.size() );
+        }
+
         m_sourcesCached.clear();
         m_sourcesCachedCnt.clear();
 
@@ -256,6 +291,10 @@ void RTGL1::Fluid::AddSource( const RgSpawnFluidInfo& src )
 {
     if( src.count == 0 )
     {
+        if( FluidDebugLogEnabled() )
+        {
+            debug::Info( "RTGL fluid source ignored: count=0" );
+        }
         return;
     }
 
@@ -269,6 +308,24 @@ void RTGL1::Fluid::AddSource( const RgSpawnFluidInfo& src )
     {
         debug::Error( "Too many fluid sources in a frame, ignoring" );
         return;
+    }
+
+    if( FluidDebugLogEnabled() )
+    {
+        debug::Info( "RTGL fluid source add: sourceIndex={} count={} pos=({:.5f} {:.5f} {:.5f}) "
+                     "velocity=({:.5f} {:.5f} {:.5f}) radius={:.5f} dispersionVelocity={:.3f} "
+                     "dispersionAngle={:.3f}",
+                     m_sourcesCached.size(),
+                     src.count,
+                     src.position.data[ 0 ],
+                     src.position.data[ 1 ],
+                     src.position.data[ 2 ],
+                     src.velocity.data[ 0 ],
+                     src.velocity.data[ 1 ],
+                     src.velocity.data[ 2 ],
+                     src.radius,
+                     src.dispersionVelocity,
+                     src.dispersionAngleDegrees );
     }
     
     m_sourcesCached.push_back( ShParticleSourceDef{
@@ -313,6 +370,14 @@ void RTGL1::Fluid::Simulate( VkCommandBuffer  cmd,
     const auto sourceCount = uint32_t( m_sourcesCached.size() );
     if( sourceCount > 0 )
     {
+        if( FluidDebugLogEnabled() )
+        {
+            debug::Info( "RTGL fluid simulate sources: frameIndex={} sourceCount={} activeBefore={}",
+                         frameIndex,
+                         sourceCount,
+                         m_active.length() );
+        }
+
         assert( sourceCount == m_sourcesCachedCnt.size() );
         {
             memcpy( m_sources.GetMapped( frameIndex ), //
@@ -325,6 +390,24 @@ void RTGL1::Fluid::Simulate( VkCommandBuffer  cmd,
         {
             const RingBuf newlyAdded =
                 makeRing( generateIdToSource_copy.ringEnd, m_sourcesCachedCnt[ sourceId ] );
+            const uint32_t activeBeforeAppend = m_active.length();
+            const uint32_t killedByOverwrite =
+                activeBeforeAppend + newlyAdded.length() > MAX_PARTICLES
+                    ? activeBeforeAppend + newlyAdded.length() - MAX_PARTICLES
+                    : 0;
+
+            if( FluidDebugLogEnabled() )
+            {
+                debug::Info( "RTGL fluid source schedule: sourceIndex={} count={} generateBegin={} "
+                             "generateEnd={} generateLength={} activeBefore={} overwritten={}",
+                             sourceId,
+                             m_sourcesCachedCnt[ sourceId ],
+                             newlyAdded.ringBegin,
+                             newlyAdded.ringEnd,
+                             newlyAdded.length(),
+                             activeBeforeAppend,
+                             killedByOverwrite );
+            }
 
             for( const CopyRange& r : newlyAdded.asRanges() )
             {
@@ -340,6 +423,12 @@ void RTGL1::Fluid::Simulate( VkCommandBuffer  cmd,
 
             generateIdToSource_copy = appendRing( generateIdToSource_copy, newlyAdded );
             m_active                = appendRing( m_active, newlyAdded );
+
+            if( FluidDebugLogEnabled() && killedByOverwrite > 0 )
+            {
+                debug::Info( "RTGL fluid particles destroyed by ring overwrite: count={}",
+                             killedByOverwrite );
+            }
         }
     }
     m_sourcesCached.clear();
@@ -347,6 +436,23 @@ void RTGL1::Fluid::Simulate( VkCommandBuffer  cmd,
 
 
     const bool generate = generateIdToSource_copy.length() > 0 && sourceCount > 0;
+
+    if( FluidDebugLogEnabled() )
+    {
+        debug::Info( "RTGL fluid simulate dispatch: frameIndex={} generate={} activeBegin={} "
+                     "activeLength={} generateBegin={} generateLength={} deltaTime={:.6f} "
+                     "gravity=({:.4f} {:.4f} {:.4f})",
+                     frameIndex,
+                     generate,
+                     m_active.ringBegin,
+                     m_active.length(),
+                     generateIdToSource_copy.ringBegin,
+                     generateIdToSource_copy.length(),
+                     deltaTime,
+                     gravity.data[ 0 ],
+                     gravity.data[ 1 ],
+                     gravity.data[ 2 ] );
+    }
 
 
     if( generate )
@@ -451,6 +557,34 @@ void RTGL1::Fluid::Simulate( VkCommandBuffer  cmd,
         Utils::GetWorkGroupCount( m_active.length(), COMPUTE_FLUID_PARTICLES_GROUP_SIZE_X ),
         1,
         1 );
+
+    {
+        const auto barrier = VkBufferMemoryBarrier2{
+            .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+            .pNext               = nullptr,
+            .srcStageMask        = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .srcAccessMask       = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            .dstStageMask        = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .dstAccessMask       = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer              = m_particlesArray.GetBuffer(),
+            .offset              = 0,
+            .size                = m_particlesArray.GetSize(),
+        };
+
+        const auto dep = VkDependencyInfo{
+            .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext                    = nullptr,
+            .dependencyFlags          = 0,
+            .bufferMemoryBarrierCount = 1,
+            .pBufferMemoryBarriers    = &barrier,
+        };
+
+        svkCmdPipelineBarrier2KHR( cmd, &dep );
+    }
 }
 
 void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
@@ -459,7 +593,8 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
                               const float*                  proj,
                               const RenderResolutionHelper& renderResolution,
                               float                         znear,
-                              float                         zfar )
+                              float                         zfar,
+                              int32_t                       smoothPasses )
 {
     if( !Active() )
     {
@@ -467,6 +602,25 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
     }
 
     auto label = CmdLabel{ cmd, "Fluid Particles Visualize" };
+
+    if( FluidDebugLogEnabled() )
+    {
+        static uint64_t visualizeSerial = 0;
+        visualizeSerial++;
+        if( visualizeSerial <= 8 || visualizeSerial % 60 == 0 )
+        {
+            debug::Info( "RTGL fluid visualize: serial={} frameIndex={} drawInstances={} "
+                         "resolution={}x{} znear={:.5f} zfar={:.3f} smoothPasses={}",
+                         visualizeSerial,
+                         frameIndex,
+                         m_active.length(),
+                         renderResolution.Width(),
+                         renderResolution.Height(),
+                         znear,
+                         zfar,
+                         smoothPasses );
+        }
+    }
 
     auto push = VisualizePush_T{};
     {
@@ -493,6 +647,36 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
         VkClearValue{ .color = { .uint32 = 0xFFFFFFFF } },
         VkClearValue{ .depthStencil = { .depth = 1.0f } },
     };
+
+    {
+        const auto barrier = VkMemoryBarrier2{
+            .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .pNext         = nullptr,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+            .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        };
+
+        const auto dep = VkDependencyInfo{
+            .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext                    = nullptr,
+            .dependencyFlags          = 0,
+            .memoryBarrierCount       = 1,
+            .pMemoryBarriers          = &barrier,
+            .bufferMemoryBarrierCount = 0,
+            .pBufferMemoryBarriers    = nullptr,
+            .imageMemoryBarrierCount  = 0,
+            .pImageMemoryBarriers     = nullptr,
+        };
+
+        svkCmdPipelineBarrier2KHR( cmd, &dep );
+    }
 
     const auto begin = VkRenderPassBeginInfo{
         .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -533,8 +717,45 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
     }
     vkCmdEndRenderPass( cmd );
 
+    {
+        const auto barrier = VkMemoryBarrier2{
+            .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .pNext         = nullptr,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+            .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+        };
 
-    // Need to be odd, so the final write is into DepthFluid
+        const auto dep = VkDependencyInfo{
+            .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext                    = nullptr,
+            .dependencyFlags          = 0,
+            .memoryBarrierCount       = 1,
+            .pMemoryBarriers          = &barrier,
+            .bufferMemoryBarrierCount = 0,
+            .pBufferMemoryBarriers    = nullptr,
+            .imageMemoryBarrierCount  = 0,
+            .pImageMemoryBarriers     = nullptr,
+        };
+
+        svkCmdPipelineBarrier2KHR( cmd, &dep );
+    }
+
+    if( smoothPasses == 0 )
+    {
+        if( FluidDebugLogEnabled() )
+        {
+            debug::Info( "RTGL fluid smoothing skipped; raygen will consume raw raster output" );
+        }
+        return;
+    }
+
     assert( std::size( m_smoothPipelines ) % 2 == 0 );
     {
         auto hlabel = CmdLabel{ cmd, "Fluid Smoothing" };
@@ -551,7 +772,19 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
                                  0,
                                  nullptr );
 
-        for( uint32_t iter = 0; iter < std::size( m_smoothPipelines ); iter++ )
+        const uint32_t maxSmoothIterationCount = uint32_t( std::size( m_smoothPipelines ) );
+        uint32_t       smoothIterationCount    = maxSmoothIterationCount;
+        if( smoothPasses > 0 )
+        {
+            smoothIterationCount =
+                std::clamp( uint32_t( smoothPasses ), 1u, maxSmoothIterationCount );
+            if( smoothIterationCount % 2 != 0 )
+            {
+                smoothIterationCount = std::min( smoothIterationCount + 1, maxSmoothIterationCount );
+            }
+        }
+
+        for( uint32_t iter = 0; iter < smoothIterationCount; iter++ )
         {
             FramebufferImageIndex fs[] = {
                 iter % 2 == 0 ? FB_IMAGE_INDEX_DEPTH_FLUID : FB_IMAGE_INDEX_DEPTH_FLUID_TEMP,

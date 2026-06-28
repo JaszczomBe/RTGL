@@ -625,9 +625,10 @@ GLOBAL_UNIFORM_STRUCT = [
     (TYPE_UINT32,       1,      "hdrDisplay",                       1),
     (TYPE_FLOAT32,      1,      "parallaxMaxDepth",                 1),
     (TYPE_UINT32,       1,      "fluidEnabled",                     1),
-    (TYPE_FLOAT32,      1,      "_pad3",                            1),
+    (TYPE_UINT32,       1,      "fluidDebugMode",                   1),
 
     (TYPE_FLOAT32,      4,      "fluidColor",                       1),
+    (TYPE_FLOAT32,      4,      "fluidTuning",                      1),
 
     #(TYPE_FLOAT32,      1,      "_pad0",                            1),
     #(TYPE_FLOAT32,      1,      "_pad1",                            1),

@@ -70,19 +70,44 @@ void sphereImpostor( const vec3  viewSpaceSphereCenter,
 
 void main()
 {
+    if( dot( in_uv, in_uv ) > 0.49 )
+    {
+        discard;
+    }
+
+    vec3 viewSpaceSphereCenter;
     vec3 viewSpacePos, viewSpaceNormal;
     {
-        vec3 viewSpaceSphereCenter = ( push.view * vec4( in_center, 1 ) ).xyz;
+        viewSpaceSphereCenter = ( push.view * vec4( in_center, 1 ) ).xyz;
+        if( any( isnan( viewSpaceSphereCenter ) ) || any( isinf( viewSpaceSphereCenter ) ) )
+        {
+            discard;
+        }
 
         sphereImpostor( viewSpaceSphereCenter, //
                         SmoothingRadius,
                         viewSpacePos,
                         viewSpaceNormal );
+
+        const float viewFacing = abs( dot( viewSpaceNormal, normalize( -viewSpacePos ) ) );
+        if( viewFacing < 0.64 )
+        {
+            discard;
+        }
     }
 
     {
-        vec4 clip    = push.proj * vec4( viewSpacePos, 1.0 );
-        gl_FragDepth = clip.z / clip.w;
+        vec4  clip        = push.proj * vec4( viewSpacePos, 1.0 );
+        float surfaceDepth = clip.z / clip.w;
+        vec4  centerClip  = push.proj * vec4( viewSpaceSphereCenter, 1.0 );
+        float centerDepth = centerClip.z / centerClip.w;
+        float depth       = max( surfaceDepth, centerDepth );
+        if( isnan( depth ) || isinf( depth ) || depth <= 0.0 || depth >= 1.0 )
+        {
+            discard;
+        }
+
+        gl_FragDepth = depth;
     }
     {
         vec3 worldNormal = transpose( mat3( push.view ) ) * viewSpaceNormal;

@@ -184,6 +184,12 @@ VkCommandBuffer RTGL1::VulkanDevice::BeginFrame( const RgStartFrameInfo& info )
         }
         fluidGravity = fluidInfo.gravity;
         fluidColor   = fluidInfo.color;
+        fluidDebugMode = fluidInfo.debugMode;
+        fluidSmoothPasses = fluidInfo.smoothPasses;
+        fluidParticleRadius = fluidInfo.particleRadius;
+        fluidDepthWindowScale = fluidInfo.depthWindowScale;
+        fluidMinDepthWindow = fluidInfo.minDepthWindow;
+        fluidSurfaceNormalCull = fluidInfo.surfaceNormalCull;
     }
 #ifdef RG_USE_IMGUI
     if( debugWindows )
@@ -483,7 +489,13 @@ void RTGL1::VulkanDevice::FillUniform( RTGL1::ShGlobalUniform* gu,
 
     {
         gu->fluidEnabled = fluid && fluid->Active();
+        gu->fluidDebugMode = fluidDebugMode;
         RG_SET_VEC3_A( gu->fluidColor, fluidColor.data );
+        gu->fluidColor[ 3 ] = fluidParticleRadius;
+        gu->fluidTuning[ 0 ] = fluidDepthWindowScale;
+        gu->fluidTuning[ 1 ] = fluidMinDepthWindow;
+        gu->fluidTuning[ 2 ] = fluidSurfaceNormalCull;
+        gu->fluidTuning[ 3 ] = 0.0f;
     }
 
     {
@@ -646,7 +658,8 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                               cameraInfo.projection,
                               renderResolution,
                               cameraInfo.cameraNear,
-                              cameraInfo.cameraFar );
+                              cameraInfo.cameraFar,
+                              fluidSmoothPasses );
         }
     }
 

@@ -93,9 +93,9 @@ void main()
         center_d = imageLoad( framebufDepthFluidTemp, pix ).r;
     }
 
-    if( center_d >= SKY_THRESHOLD )
+    if( isnan( center_d ) || isinf( center_d ) || center_d <= 0.0 || center_d >= SKY_THRESHOLD )
     {
-        saveResult( pix, vec3( 0, 0, 1 ), center_d );
+        saveResult( pix, vec3( 0, 0, 1 ), 1.0 );
         return;
     }
 
@@ -153,6 +153,11 @@ void main()
             dn = decodeNormal( imageLoad( framebufFluidNormalTemp, p ).r );
         }
 
+        if( isnan( dd ) || isinf( dd ) || dd <= 0.0 || dd >= SKY_THRESHOLD )
+        {
+            continue;
+        }
+
         // spatial domain
         float r = 0.5 / ( abs( i ) + abs( j ) ) * BLUR_SCALE;
         float w = exp( -r * r );
@@ -161,10 +166,6 @@ void main()
         float r2 =
             abs( linearize_depth_01( dd ) - linearize_depth_01( center_d ) ) * BLUR_DEPTH_FALLOFF;
         float g = exp( -r2 * r2 );
-
-#if 0
-        g *= dd < SKY_THRESHOLD ? 1.0 : 0.0;
-#endif
 
         sum_d += dd * w * g;
         sum_n += dn * w * g;

@@ -300,8 +300,9 @@ struct ShGlobalUniform
     uint32_t hdrDisplay;
     float parallaxMaxDepth;
     uint32_t fluidEnabled;
-    float _pad3;
+    uint32_t fluidDebugMode;
     float fluidColor[4];
+    float fluidTuning[4];
     float viewProjCubemap[96];
     float skyCubemapRotationTransform[16];
 };

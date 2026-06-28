@@ -278,63 +278,261 @@ vec4 makeNdcCoord(const ivec2 pix_regular, float ndcDepth)
                  1.0 );
 }
 
-bool tryAsFluid( const ivec2 pix, const ivec2 pix_regular, const vec3 cameraRayDir, const float hitDepth )
+void storeFluidDebugSurface( const ivec2 pix,
+                             const ivec2 pix_regular,
+                             const vec3  color,
+                             const vec3  cameraRayDir,
+                             const float fluidDepthNDC,
+                             const float fluidDepthLinear,
+                             const vec3  worldPos,
+                             const vec2  motionCurToPrev,
+                             const float motionDepthLinearCurToPrev )
 {
-    if( globalUniform.fluidEnabled == 0 )
-    {
-        return false;
-    }
-
-    const float fluidDepthNDC =
-        saturate( texelFetch( framebufDepthFluid_Sampler, pix_regular, 0 ).r );
-    if( fluidDepthNDC > hitDepth )
-    {
-        return false;
-    }
-
-    // restore world position, motion vectors
-    const vec4 ndcCur = makeNdcCoord( pix_regular, fluidDepthNDC );
-
-    vec4 viewSpacePosCur = globalUniform.invProjection * ndcCur;
-    viewSpacePosCur /= viewSpacePosCur.w;
-
-          vec3 worldPos         = ( globalUniform.invView * viewSpacePosCur ).xyz;
-    const vec4 viewSpacePosPrev = globalUniform.viewPrev * vec4( worldPos, 1.0 );
-    const vec4 clipSpacePosPrev = globalUniform.projectionPrev * viewSpacePosPrev;
-    const vec3 ndcPrev          = clipSpacePosPrev.xyz / clipSpacePosPrev.w;
-
-    const vec2 screenSpaceCur  = ndcCur.xy * 0.5 + 0.5;
-    const vec2 screenSpacePrev = ndcPrev.xy * 0.5 + 0.5;
-
-    const vec2  motionCurToPrev            = ( screenSpacePrev - screenSpaceCur );
-    const float fluidDepthLinear           = length( viewSpacePosCur.xyz );
-    const float motionDepthLinearCurToPrev = length( viewSpacePosPrev.xyz ) - fluidDepthLinear;
-
-    const vec3 normal =
-        decodeNormal( texelFetch( framebufFluidNormal_Sampler, pix_regular, 0 ).r );
-
-    // SHIPPING_HACK: apply some offset to prevent clipping with base surface
-    worldPos += -0.005 * cameraRayDir;
-    // SHIPPING_HACK
+    const vec3 debugColor = clamp( color, vec3( 0.0 ), vec3( 1.0 ) );
 
     // clang-format off
-    // emulate primary surface
-    imageStore( framebufIsSky,              pix,            ivec4( 0 ) );
-    imageStore( framebufAlbedo,             pix_regular,    vec4( 1, 1, 1, 0 ) );
-    imageStore( framebufScreenEmisRT,       pix_regular,    vec4( 0 ) );
-    imageStoreNormal(                       pix,            normal );
-    imageStore( framebufMetallicRoughness,  pix,            vec4( 1 /* metallic */, 0 /* roughness */, 0, 0 ) );
+    imageStore( framebufIsSky,              pix,            ivec4( 1 ) );
+    imageStore( framebufAlbedo,             pix_regular,    vec4( debugColor, 0.0 ) );
+    imageStore( framebufScreenEmisRT,       pix_regular,    vec4( debugColor * 0.02, 0.0 ) );
+    imageStoreNormal(                       pix,            vec3( 0.0 ) );
+    imageStore( framebufMetallicRoughness,  pix,            vec4( 0 /* metallic */, 0.30 /* roughness */, 0, 0 ) );
     imageStore( framebufDepthWorld,         pix,            vec4( fluidDepthLinear ) );
     imageStore( framebufDepthGrad,          pix,            vec4( 0 ) );
     imageStore( framebufMotion,             pix,            vec4( motionCurToPrev, motionDepthLinearCurToPrev, 0.0 ) );
     imageStore( framebufSurfacePosition,    pix,            vec4( worldPos, 0 /* instCustomIndex */ ) );
     imageStore( framebufVisibilityBuffer,   pix,            packVisibilityBuffer_Invalid() );
     imageStore( framebufViewDirection,      pix,            vec4( cameraRayDir, 0.0 ) );
-    imageStore( framebufThroughput,         pix,            vec4( globalUniform.fluidColor.xyz, 0.0 ) );
-    imageStore( framebufPrimaryToReflRefr,  pix,            uvec4( GEOM_INST_FLAG_REFRACT | GEOM_INST_FLAG_REFLECT | GEOM_INST_FLAG_MEDIA_TYPE_GLASS, 0 /* no instIdAndIndex */, 0, 0 ) );
+    imageStore( framebufThroughput,         pix,            vec4( debugColor, -1.0 ) );
+    imageStore( framebufPrimaryToReflRefr,  pix,            uvec4( 0, 0, PORTAL_INDEX_NONE, 0 ) );
     imageStore( framebufDepthNdc,           pix_regular,    vec4( clamp( fluidDepthNDC, 0.0, 1.0 ) ) );
     imageStore( framebufMotionDlss,         pix_regular,    vec4( getMotionVectorForUpscaler( motionCurToPrev ), 0.0, 0.0 ) );
-    imageStore( framebufReactivity,         pix_regular,    vec4( 0.0 ) );
+    imageStore( framebufReactivity,         pix_regular,    vec4( 1.0 ) );
+    // clang-format on
+}
+
+bool tryAsFluid( const ivec2 pix,
+                 const ivec2 pix_regular,
+                 const vec3  cameraRayDir,
+                 const float hitDepth,
+                 const float hitDepthLinear,
+                 const vec3  hitPosition,
+                 const vec3  hitNormal,
+                 const vec2  hitMotionCurToPrev,
+                 const float hitMotionDepthLinearCurToPrev )
+{
+    if( globalUniform.fluidEnabled == 0 )
+    {
+        return false;
+    }
+
+    const float fluidDepthNDC = texelFetch( framebufDepthFluid_Sampler, pix_regular, 0 ).r;
+    if( isnan( fluidDepthNDC ) || isinf( fluidDepthNDC ) || fluidDepthNDC <= 0.0 ||
+        fluidDepthNDC >= 0.99999 )
+    {
+        return false;
+    }
+
+    if( hitDepth >= 0.99999 )
+    {
+        return false;
+    }
+
+    const vec4 ndcCur = makeNdcCoord( pix_regular, fluidDepthNDC );
+
+    vec4 viewSpacePosCur = globalUniform.invProjection * ndcCur;
+    viewSpacePosCur /= viewSpacePosCur.w;
+
+    const float fluidDepthLinear = length( viewSpacePosCur.xyz );
+    const float fluidDepthDelta  = fluidDepthLinear - hitDepthLinear;
+    const float fluidDepthWindow = max( globalUniform.fluidColor.w * globalUniform.fluidTuning.x,
+                                        globalUniform.fluidTuning.y );
+
+    if( abs( fluidDepthDelta ) > fluidDepthWindow )
+    {
+        if( globalUniform.fluidDebugMode == 4 )
+        {
+            const vec3 rejectColor =
+                fluidDepthDelta < 0.0 ? vec3( 1.0, 1.0, 0.0 ) : vec3( 1.0, 0.45, 0.0 );
+            storeFluidDebugSurface( pix,
+                                    pix_regular,
+                                    rejectColor,
+                                    cameraRayDir,
+                                    hitDepth,
+                                    hitDepthLinear,
+                                    hitPosition,
+                                    hitMotionCurToPrev,
+                                    hitMotionDepthLinearCurToPrev );
+            return true;
+        }
+        return false;
+    }
+
+    {
+        const ivec2 fluidLastPix = textureSize( framebufDepthFluid_Sampler, 0 ) - ivec2( 1 );
+        const float fluidDepthL =
+            texelFetch( framebufDepthFluid_Sampler,
+                        clamp( pix_regular + ivec2( -1, 0 ), ivec2( 0 ), fluidLastPix ),
+                        0 )
+                .r;
+        const float fluidDepthR =
+            texelFetch( framebufDepthFluid_Sampler,
+                        clamp( pix_regular + ivec2( 1, 0 ), ivec2( 0 ), fluidLastPix ),
+                        0 )
+                .r;
+        const float fluidDepthU =
+            texelFetch( framebufDepthFluid_Sampler,
+                        clamp( pix_regular + ivec2( 0, -1 ), ivec2( 0 ), fluidLastPix ),
+                        0 )
+                .r;
+        const float fluidDepthD =
+            texelFetch( framebufDepthFluid_Sampler,
+                        clamp( pix_regular + ivec2( 0, 1 ), ivec2( 0 ), fluidLastPix ),
+                        0 )
+                .r;
+
+        if( fluidDepthL <= 0.0 || fluidDepthL >= 0.99999 || //
+            fluidDepthR <= 0.0 || fluidDepthR >= 0.99999 || //
+            fluidDepthU <= 0.0 || fluidDepthU >= 0.99999 || //
+            fluidDepthD <= 0.0 || fluidDepthD >= 0.99999 )
+        {
+            if( globalUniform.fluidDebugMode == 4 )
+            {
+                storeFluidDebugSurface( pix,
+                                        pix_regular,
+                                        vec3( 0.0, 1.0, 1.0 ),
+                                        cameraRayDir,
+                                        hitDepth,
+                                        hitDepthLinear,
+                                        hitPosition,
+                                        hitMotionCurToPrev,
+                                        hitMotionDepthLinearCurToPrev );
+                return true;
+            }
+            return false;
+        }
+    }
+
+    const uint packedNormal =
+        texelFetch( framebufFluidNormal_Sampler, pix_regular, 0 ).r;
+    if( packedNormal == 0xFFFFFFFFu )
+    {
+        if( globalUniform.fluidDebugMode == 4 )
+        {
+            storeFluidDebugSurface( pix,
+                                    pix_regular,
+                                    vec3( 0.0, 0.15, 1.0 ),
+                                    cameraRayDir,
+                                    hitDepth,
+                                    hitDepthLinear,
+                                    hitPosition,
+                                    hitMotionCurToPrev,
+                                    hitMotionDepthLinearCurToPrev );
+            return true;
+        }
+        return false;
+    }
+
+    const vec3 normal = decodeNormal( packedNormal );
+    if( any( isnan( normal ) ) || any( isinf( normal ) ) || dot( normal, normal ) < 0.25 )
+    {
+        if( globalUniform.fluidDebugMode == 4 )
+        {
+            storeFluidDebugSurface( pix,
+                                    pix_regular,
+                                    vec3( 0.45, 0.0, 1.0 ),
+                                    cameraRayDir,
+                                    hitDepth,
+                                    hitDepthLinear,
+                                    hitPosition,
+                                    hitMotionCurToPrev,
+                                    hitMotionDepthLinearCurToPrev );
+            return true;
+        }
+        return false;
+    }
+
+    const float surfaceAlignment =
+        dot( safeNormalize2( normal, hitNormal ), safeNormalize2( hitNormal, normal ) );
+    if( surfaceAlignment < globalUniform.fluidTuning.z )
+    {
+        if( globalUniform.fluidDebugMode == 4 )
+        {
+            storeFluidDebugSurface( pix,
+                                    pix_regular,
+                                    vec3( 1.0, 0.0, 0.0 ),
+                                    cameraRayDir,
+                                    hitDepth,
+                                    hitDepthLinear,
+                                    hitPosition,
+                                    hitMotionCurToPrev,
+                                    hitMotionDepthLinearCurToPrev );
+            return true;
+        }
+        return false;
+    }
+
+    if( globalUniform.fluidDebugMode != 0 )
+    {
+        vec3 debugColor = vec3( 1.0, 0.0, 1.0 );
+        if( globalUniform.fluidDebugMode == 2 )
+        {
+            debugColor = normal * 0.5 + 0.5;
+        }
+        else if( globalUniform.fluidDebugMode == 3 )
+        {
+            const float depthBand = fract( fluidDepthLinear * 2.0 );
+            debugColor = mix( vec3( 0.0, 0.2, 1.0 ), vec3( 1.0, 0.9, 0.0 ), depthBand );
+        }
+        else if( globalUniform.fluidDebugMode == 4 )
+        {
+            debugColor = vec3( 0.0, 1.0, 0.0 );
+        }
+
+        storeFluidDebugSurface( pix,
+                                pix_regular,
+                                debugColor,
+                                cameraRayDir,
+                                hitDepth,
+                                hitDepthLinear,
+                                hitPosition,
+                                hitMotionCurToPrev,
+                                hitMotionDepthLinearCurToPrev );
+        return true;
+    }
+
+    const float bloodWave0 = sin( dot( hitPosition, vec3( 3.7, 5.1, 2.3 ) ) );
+    const float bloodWave1 =
+        sin( dot( hitPosition, vec3( -6.2, 2.9, 4.7 ) ) + bloodWave0 * 0.35 );
+    const float bloodTone = clamp( 0.80 + 0.14 * bloodWave0 + 0.08 * bloodWave1, //
+                                   0.58,
+                                   1.04 );
+    const float normalShade = 0.96;
+    const vec3  bloodTint  = clamp( globalUniform.fluidColor.xyz,
+                                    vec3( 0.18, 0.0, 0.0 ),
+                                    vec3( 0.50, 0.035, 0.025 ) );
+    const vec3  bloodAlbedo =
+        clamp( bloodTint * bloodTone * normalShade,
+               vec3( 0.012, 0.0, 0.0 ),
+               vec3( 0.50, 0.035, 0.025 ) );
+
+    // clang-format off
+    // emulate primary surface
+    imageStore( framebufIsSky,              pix,            ivec4( 1 ) );
+    imageStore( framebufAlbedo,             pix_regular,    vec4( bloodAlbedo, 0.0 ) );
+    imageStore( framebufScreenEmisRT,       pix_regular,    vec4( bloodAlbedo * 0.015, 0.0 ) );
+    imageStoreNormal(                       pix,            vec3( 0.0 ) );
+    imageStore( framebufMetallicRoughness,  pix,            vec4( 0 /* metallic */, 0.30 /* roughness */, 0, 0 ) );
+    imageStore( framebufDepthWorld,         pix,            vec4( hitDepthLinear ) );
+    imageStore( framebufDepthGrad,          pix,            vec4( 0 ) );
+    imageStore( framebufMotion,             pix,            vec4( hitMotionCurToPrev, hitMotionDepthLinearCurToPrev, 0.0 ) );
+    imageStore( framebufSurfacePosition,    pix,            vec4( hitPosition, 0 /* instCustomIndex */ ) );
+    imageStore( framebufVisibilityBuffer,   pix,            packVisibilityBuffer_Invalid() );
+    imageStore( framebufViewDirection,      pix,            vec4( cameraRayDir, 0.0 ) );
+    imageStore( framebufThroughput,         pix,            vec4( bloodAlbedo, -1.0 ) );
+    imageStore( framebufPrimaryToReflRefr,  pix,            uvec4( 0, 0, PORTAL_INDEX_NONE, 0 ) );
+    imageStore( framebufDepthNdc,           pix_regular,    vec4( clamp( hitDepth, 0.0, 1.0 ) ) );
+    imageStore( framebufMotionDlss,         pix_regular,    vec4( getMotionVectorForUpscaler( hitMotionCurToPrev ), 0.0, 0.0 ) );
+    imageStore( framebufReactivity,         pix_regular,    vec4( 1.0 ) );
     // clang-format on
 
     return true;
@@ -373,11 +571,6 @@ void main()
     // was no hit
     if (!doesPayloadContainHitInfo(primaryPayload))
     {
-        if( tryAsFluid( pix, regularPix, cameraRayDir, 0.999999 ) )
-        {
-            return;
-        }
-
         vec3 throughput = vec3(1.0);
         // throughput *= getMediaTransmittance(currentRayMedia, pow(abs(dot(cameraRayDir, globalUniform.worldUpVector.xyz)), -3));
 
@@ -409,7 +602,15 @@ void main()
                                               firstHitDepthLinear,
                                               screenEmission );
 
-    if( tryAsFluid( pix, regularPix, cameraRayDir, firstHitDepthNDC ) )
+    if( tryAsFluid( pix,
+                    regularPix,
+                    cameraRayDir,
+                    firstHitDepthNDC,
+                    firstHitDepthLinear,
+                    h.hitPosition,
+                    h.normal,
+                    motionCurToPrev,
+                    motionDepthLinearCurToPrev ) )
     {
         return;
     }
