@@ -801,7 +801,7 @@ FRAMEBUFFERS = {
     "DepthWorld"                        : (TYPE_FLOAT16,    COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
     "DepthGrad"                         : (TYPE_FLOAT16,    COMPONENT_R,    0),
     "DepthNdc"                          : (TYPE_FLOAT32,    COMPONENT_R,    0),
-    "DepthFluid"                        : (TYPE_FLOAT32,    COMPONENT_R,    0),
+    "DepthFluid"                        : (TYPE_FLOAT32,    COMPONENT_R,    FRAMEBUF_FLAGS_IS_ATTACHMENT),
     "DepthFluidTemp"                    : (TYPE_FLOAT32,    COMPONENT_R,    0),
     "FluidNormal"                       : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_IS_ATTACHMENT),
     "FluidNormalTemp"                   : (TYPE_UINT32,     COMPONENT_R,    0),

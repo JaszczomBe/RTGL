@@ -93,8 +93,6 @@ public:
         FramebufferImageIndex  fbImageIndex,
         uint32_t               frameIndex,
         const ResolutionState& resolutionState ) const;
-    auto GetImageForAlias( FramebufferImageIndex fbImageIndex, uint32_t frameIndex ) const
-        -> std::tuple< VkFormat, VkDeviceMemory >;
 
     VkExtent2D GetFramebufSize( const ResolutionState& resolutionState,
                                 FramebufferImageIndex  index ) const;

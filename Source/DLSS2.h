@@ -25,6 +25,7 @@ SOFTWARE.
 
 #pragma once
 
+#include <filesystem>
 #include <vector>
 
 #include "Camera.h"
@@ -47,12 +48,14 @@ public:
     static auto MakeInstance( VkInstance       instance,
                               VkDevice         device,
                               VkPhysicalDevice physDevice,
-                              const char*      pAppGuid ) -> std::shared_ptr< DLSS2 >;
+                              const char*      pAppGuid,
+                              const std::vector< std::filesystem::path >& librarySearchPaths ) -> std::shared_ptr< DLSS2 >;
 
     DLSS2( VkInstance       instance,
            VkDevice         device,
            VkPhysicalDevice physDevice,
-           const char*      pAppGuid );
+           const char*      pAppGuid,
+           const std::vector< std::filesystem::path >& librarySearchPaths );
     ~DLSS2();
 
     DLSS2( const DLSS2& )                = delete;
@@ -95,9 +98,10 @@ private:
 inline auto RTGL1::DLSS2::MakeInstance( VkInstance       instance,
                                         VkDevice         device,
                                         VkPhysicalDevice physDevice,
-                                        const char*      pAppGuid ) -> std::shared_ptr< DLSS2 >
+                                        const char*      pAppGuid,
+                                        const std::vector< std::filesystem::path >& librarySearchPaths ) -> std::shared_ptr< DLSS2 >
 {
-    auto inst = std::make_shared< DLSS2 >( instance, device, physDevice, pAppGuid );
+    auto inst = std::make_shared< DLSS2 >( instance, device, physDevice, pAppGuid, librarySearchPaths );
     if( !inst || !inst->Valid() )
     {
         return {};

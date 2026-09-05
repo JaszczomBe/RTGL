@@ -32,11 +32,11 @@ SOFTWARE.
 #include "CmdLabel.h"
 #include "LibraryConfig.h"
 #include "RenderResolutionHelper.h"
-#include "Utils.h"
 
 #include <nvsdk_ngx_helpers_vk.h>
 #include <nvsdk_ngx_helpers.h>
 
+#include <algorithm>
 #include <filesystem>
 
 namespace
@@ -77,9 +77,16 @@ NVSDK_NGX_PerfQuality_Value ToNGXPerfQuality( RgRenderResolutionMode mode )
 RTGL1::DLSS2::DLSS2( VkInstance       instance,
                      VkDevice         device,
                      VkPhysicalDevice physDevice,
-                     const char*      pAppGuid )
+                     const char*      pAppGuid,
+                     const std::vector< std::filesystem::path >& librarySearchPaths )
     : m_device{ device }
 {
+    if( librarySearchPaths.empty() )
+    {
+        debug::Warning( "DLSS2: Disabled, no library search paths were provided" );
+        return;
+    }
+
     if( !RequiredVulkanExtensions_Instance() || !RequiredVulkanExtensions_Device( physDevice ) )
     {
         return;
@@ -87,21 +94,22 @@ RTGL1::DLSS2::DLSS2( VkInstance       instance,
 
     NVSDK_NGX_Result r{};
 
-    const auto binFolder      = Utils::FindBinFolder();
     const auto dataFolderPath = std::filesystem::path{ L"temp/dlss" };
 
-    if( !exists( binFolder / "nvngx_dlss.dll" ) )
+    auto searchFolders = std::vector< std::wstring >{};
+    for( const auto& folder : librarySearchPaths )
     {
-        debug::Warning( "DLSS2: Disabled, as DLL file was not found: {}",
-                        ( binFolder / "nvngx_dlss.dll" ).string() );
-        return;
+        searchFolders.push_back( folder.wstring() );
+    }
+    auto searchPaths = std::vector< const wchar_t* >{};
+    for( const auto& folder : searchFolders )
+    {
+        searchPaths.push_back( folder.c_str() );
     }
 
-    const wchar_t* binFolder_c = binFolder.c_str();
-
     auto pathsInfo = NVSDK_NGX_PathListInfo{
-        .Path   = &binFolder_c,
-        .Length = 1,
+        .Path   = searchPaths.data(),
+        .Length = static_cast< unsigned int >( searchPaths.size() ),
     };
 
     auto commonInfo = NVSDK_NGX_FeatureCommonInfo{
@@ -128,7 +136,7 @@ RTGL1::DLSS2::DLSS2( VkInstance       instance,
     r = NVSDK_NGX_VULKAN_Init_with_ProjectID( pAppGuid,
                                               NVSDK_NGX_EngineType::NVSDK_NGX_ENGINE_TYPE_CUSTOM,
                                               RG_RTGL_VERSION_API,
-                                              dataFolderPath.c_str(),
+                                              dataFolderPath.wstring().c_str(),
                                               instance,
                                               physDevice,
                                               device,
@@ -614,7 +622,8 @@ auto RTGL1::DLSS2::RequiredVulkanExtensions_Device( VkPhysicalDevice physDevice 
 RTGL1::DLSS2::DLSS2( VkInstance       instance,
                      VkDevice         device,
                      VkPhysicalDevice physDevice,
-                     const char*      pAppGuid )
+                     const char*      pAppGuid,
+                     const std::vector< std::filesystem::path >& librarySearchPaths )
 {
 }
 

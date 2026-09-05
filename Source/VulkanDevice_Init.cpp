@@ -471,11 +471,59 @@ RTGL1::VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         physDevice->Get() );
 
 #ifdef RG_USE_NATIVE_DLSS2
-    nvDlss2 = DLSS2::MakeInstance(
-        instance,
-        device,
-        physDevice->Get(),
-        appGuid.c_str() );
+    auto dlssSearchPaths = std::vector< std::filesystem::path >{};
+#ifdef _WIN32
+    // Preserve the Windows bundle's lookup and optional-DLSS behavior.
+    const auto dlssBinFolder = Utils::FindBinFolder();
+    if( exists( dlssBinFolder / "nvngx_dlss.dll" ) )
+    {
+        dlssSearchPaths.push_back( dlssBinFolder );
+    }
+    else
+    {
+        debug::Warning( "DLSS2: Disabled, as DLL file was not found: {}",
+                        ( dlssBinFolder / "nvngx_dlss.dll" ).string() );
+    }
+#else
+    // Linux installations may keep the DLSS runtime separately from the renderer.
+    if( auto moduleDir = Utils::GetModuleDirectory(); !moduleDir.empty() )
+    {
+        dlssSearchPaths.push_back( std::move( moduleDir ) );
+    }
+    if( !ovrdFolder.empty() )
+    {
+        dlssSearchPaths.push_back( ovrdFolder / "bin" );
+    }
+    // NGX loads the DLSS runtime from these paths; if none can provide it,
+    // say so now instead of failing silently inside NGX later.
+    auto containsDlssRuntime = []( const std::filesystem::path& folder ) {
+        std::error_code ec;
+        for( const auto& entry : std::filesystem::directory_iterator{ folder, ec } )
+        {
+            const auto name = entry.path().filename().string();
+            if( name.find( "nvngx_dlss" ) != std::string::npos ||
+                name.find( "nvidia-ngx-dlss" ) != std::string::npos )
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    if( !std::ranges::any_of( dlssSearchPaths, containsDlssRuntime ) )
+    {
+        debug::Warning( "DLSS2: DLSS runtime library (nvngx_dlss / libnvidia-ngx-dlss) was not "
+                        "found next to the RTGL library or in the override bin folder" );
+    }
+#endif
+    if( !dlssSearchPaths.empty() )
+    {
+        nvDlss2 = DLSS2::MakeInstance(
+            instance,
+            device,
+            physDevice->Get(),
+            appGuid.c_str(),
+            dlssSearchPaths );
+    }
 #endif
 
     sharpening = std::make_shared< Sharpening >( 
