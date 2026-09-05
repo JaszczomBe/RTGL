@@ -482,7 +482,9 @@ layout(set = DESC_SET_FRAMEBUFFERS, binding = 6, r16f) uniform image2D framebufD
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 7, r16f) uniform image2D framebufDepthWorld_Prev;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 8, r16f) uniform image2D framebufDepthGrad;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 9, r32f) uniform image2D framebufDepthNdc;
+#ifndef FRAMEBUF_IGNORE_ATTACHMENTS
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 10, r32f) uniform image2D framebufDepthFluid;
+#endif
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 11, r32f) uniform image2D framebufDepthFluidTemp;
 #ifndef FRAMEBUF_IGNORE_ATTACHMENTS
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 12, r32ui) uniform uimage2D framebufFluidNormal;
@@ -580,7 +582,9 @@ layout(set = DESC_SET_FRAMEBUFFERS, binding = 84) uniform sampler2D framebufDept
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 85) uniform sampler2D framebufDepthWorld_Prev_Sampler;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 86) uniform sampler2D framebufDepthGrad_Sampler;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 87) uniform sampler2D framebufDepthNdc_Sampler;
+#ifndef FRAMEBUF_IGNORE_ATTACHMENTS
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 88) uniform sampler2D framebufDepthFluid_Sampler;
+#endif
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 89) uniform sampler2D framebufDepthFluidTemp_Sampler;
 #ifndef FRAMEBUF_IGNORE_ATTACHMENTS
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 90) uniform usampler2D framebufFluidNormal_Sampler;

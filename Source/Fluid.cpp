@@ -29,11 +29,14 @@ SOFTWARE.
 #include "Matrix.h"
 #include "MemoryAllocator.h"
 #include "RenderResolutionHelper.h"
+#include "RgException.h"
 #include "Utils.h"
 
 #include "Generated/ShaderCommonC.h"
 #include "Generated/ShaderCommonCFramebuf.h"
 #include "Shaders/Fluid_Def.h"
+
+#include <format>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/packing.hpp>
@@ -173,6 +176,7 @@ RTGL1::Fluid::Fluid( VkDevice                                device,
     : m_device{ device }
     , m_storageFramebuffer{ std::move( storageFramebuffer ) }
     , m_cmdManager{ std::move( cmdManager ) }
+    , m_allocator{ allocator }
     , m_generateIdToSource{ allocator }
     , m_sources{ allocator }
     , m_particleRadius{ std::clamp( particleRadius, 0.01f, 1.0f ) }
@@ -466,6 +470,13 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
         return;
     }
 
+    // A failed framebuffer recreation has already reported its error; skip the
+    // pass rather than render into a null framebuffer.
+    if( m_passFramebuffer == VK_NULL_HANDLE )
+    {
+        return;
+    }
+
     auto label = CmdLabel{ cmd, "Fluid Particles Visualize" };
 
     auto push = VisualizePush_T{};
@@ -491,6 +502,7 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
 
     constexpr auto clears = std::array{
         VkClearValue{ .color = { .uint32 = 0xFFFFFFFF } },
+        VkClearValue{ .color = { .float32 = 1.0f } },
         VkClearValue{ .depthStencil = { .depth = 1.0f } },
     };
 
@@ -534,7 +546,7 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
     vkCmdEndRenderPass( cmd );
 
 
-    // Need to be odd, so the final write is into DepthFluid
+    // Need to be even, so the final write is into DepthFluid
     assert( std::size( m_smoothPipelines ) % 2 == 0 );
     {
         auto hlabel = CmdLabel{ cmd, "Fluid Smoothing" };
@@ -1004,11 +1016,12 @@ void RTGL1::Fluid::CreatePipelines( const ShaderManager& shaderManager )
                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
         };
 
+        const auto colorAttachments = std::array{ attch, attch };
         auto bld = VkPipelineColorBlendStateCreateInfo{
             .sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable   = VK_FALSE,
-            .attachmentCount = 1,
-            .pAttachments    = &attch,
+            .attachmentCount = std::size( colorAttachments ),
+            .pAttachments    = std::data( colorAttachments ),
         };
 
         VkDynamicState dynamicStates[] = {
@@ -1067,24 +1080,35 @@ void RTGL1::Fluid::CreateRenderPass()
         },
         VkAttachmentDescription{
             .flags          = 0,
-            .format         = RASTER_PASS_DEPTH_FORMAT,
+            .format         = ShFramebuffers_Formats[ FB_IMAGE_INDEX_DEPTH_FLUID ],
             .samples        = VK_SAMPLE_COUNT_1_BIT,
             .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
             .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .initialLayout  = VK_IMAGE_LAYOUT_GENERAL,
+            .finalLayout    = VK_IMAGE_LAYOUT_GENERAL,
+        },
+        VkAttachmentDescription{
+            .flags          = 0,
+            .format         = RASTER_PASS_DEPTH_FORMAT,
+            .samples        = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
             .finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         },
     };
 
-    auto normalRef = VkAttachmentReference{
-        .attachment = 0,
-        .layout     = VK_IMAGE_LAYOUT_GENERAL,
+    const auto colorRefs = std::array{
+        VkAttachmentReference{ .attachment = 0, .layout = VK_IMAGE_LAYOUT_GENERAL },
+        VkAttachmentReference{ .attachment = 1, .layout = VK_IMAGE_LAYOUT_GENERAL },
     };
 
     auto depthRef = VkAttachmentReference{
-        .attachment = 1,
+        .attachment = 2,
         .layout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
 
@@ -1093,22 +1117,34 @@ void RTGL1::Fluid::CreateRenderPass()
         .pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .inputAttachmentCount    = 0,
         .pInputAttachments       = nullptr,
-        .colorAttachmentCount    = 1,
-        .pColorAttachments       = &normalRef,
+        .colorAttachmentCount    = std::size( colorRefs ),
+        .pColorAttachments       = std::data( colorRefs ),
         .pResolveAttachments     = nullptr,
         .pDepthStencilAttachment = &depthRef,
         .preserveAttachmentCount = 0,
         .pPreserveAttachments    = nullptr,
     };
 
-    // after DrawToFinalImage
+    // Reuse the fluid images after the previous frame's smoothing, ray tracing,
+    // and this pass's own previous color writes, and the depth attachment after
+    // its previous depth tests and clear.
     auto dep = VkSubpassDependency{
         .srcSubpass      = VK_SUBPASS_EXTERNAL,
         .dstSubpass      = 0,
-        .srcStageMask    = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstStageMask    = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstAccessMask   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .srcStageMask    = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                           VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR |
+                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .dstStageMask    = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask   = VK_ACCESS_SHADER_WRITE_BIT |
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         .dependencyFlags = 0,
     };
 
@@ -1141,17 +1177,13 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
     };
 
     {
-        VkCommandBuffer cmd = m_cmdManager->StartGraphicsCmd();
-
-        assert( !m_depth.image && !m_depth.view );
+        assert( !m_depth.image && !m_depth.view && !m_depth.memory );
         assert( m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_DEPTH_FLUID, 0 ) ==
                 m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_DEPTH_FLUID, 1 ) );
 
-        auto [ format, mem ] =
-            m_storageFramebuffer->GetImageForAlias( FB_IMAGE_INDEX_DEPTH_FLUID, //
-                                                    0 );
-
-        // assuming that width, height match!
+        // Depth testing needs its own attachment. D32 and R32 optimal-tiled images
+        // cannot portably share contents by aliasing their allocations. The fragment
+        // shader writes the winning depth explicitly to the R32 color attachment.
         {
             const auto info = VkImageCreateInfo{
                 .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1172,15 +1204,33 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
             SET_DEBUG_NAME( m_device,
                             m_depth.image,
                             VK_OBJECT_TYPE_IMAGE,
-                            "DepthFluid - Aliased image for raster pass" );
+                            "Fluid raster depth" );
         }
-        // alias already allocated float32 memory
         {
-            assert( format == VK_FORMAT_R32_SFLOAT &&
-                    RASTER_PASS_DEPTH_FORMAT == VK_FORMAT_D32_SFLOAT );
+            VkMemoryRequirements memReqs;
+            vkGetImageMemoryRequirements( m_device, m_depth.image, &memReqs );
+            m_depth.memory = m_allocator->AllocDedicated( memReqs,
+                                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                                         MemoryAllocator::AllocType::DEFAULT,
+                                                         "Fluid raster depth" );
+            // VK_CHECKERROR is assertion-only; report allocation failures in
+            // release builds too, instead of proceeding into undefined behavior.
+            if( m_depth.memory == VK_NULL_HANDLE )
+            {
+                throw RgException(
+                    RG_RESULT_GRAPHICS_API_ERROR,
+                    std::format( "Fluid raster depth allocation failed ({} bytes)",
+                                 memReqs.size ) );
+            }
 
-            VkResult r = vkBindImageMemory( m_device, m_depth.image, mem, 0 );
-            VK_CHECKERROR( r );
+            VkResult r = vkBindImageMemory( m_device, m_depth.image, m_depth.memory, 0 );
+            if( r != VK_SUCCESS )
+            {
+                throw RgException(
+                    RG_RESULT_GRAPHICS_API_ERROR,
+                    std::format( "Fluid raster depth bind failed: VkResult={}",
+                                 static_cast< int >( r ) ) );
+            }
         }
         {
             const auto viewInfo = VkImageViewCreateInfo{
@@ -1197,21 +1247,8 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
             SET_DEBUG_NAME( m_device,
                             m_depth.view,
                             VK_OBJECT_TYPE_IMAGE_VIEW,
-                            "DepthFluid - Aliased view for raster pass" );
+                            "Fluid raster depth" );
         }
-
-        // to general layout
-        Utils::BarrierImage( cmd,
-                             m_depth.image,
-                             0,
-                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
-                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
-                             VK_IMAGE_LAYOUT_UNDEFINED,
-                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                             depthSubres );
-
-        m_cmdManager->Submit( cmd );
-        m_cmdManager->WaitGraphicsIdle();
     }
 
     {
@@ -1222,6 +1259,7 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
 
         VkImageView vs[] = {
             m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_FLUID_NORMAL, 0 ),
+            m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_DEPTH_FLUID, 0 ),
             m_depth.view,
         };
 
@@ -1242,19 +1280,18 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
 
 void RTGL1::Fluid::DestroyFramebuffers()
 {
-    if( m_depth.view != VK_NULL_HANDLE )
-    {
-        vkDestroyImageView( m_device, m_depth.view, nullptr );
-        vkDestroyImage( m_device, m_depth.image, nullptr );
-        m_depth.view  = VK_NULL_HANDLE;
-        m_depth.image = VK_NULL_HANDLE;
-    }
-
     if( m_passFramebuffer != VK_NULL_HANDLE )
     {
         vkDestroyFramebuffer( m_device, m_passFramebuffer, nullptr );
         m_passFramebuffer = VK_NULL_HANDLE;
     }
+
+    // Null handles are legal no-ops here; destroying each independently also
+    // releases whatever a partially failed CreateFramebuffers left behind.
+    vkDestroyImageView( m_device, m_depth.view, nullptr );
+    vkDestroyImage( m_device, m_depth.image, nullptr );
+    MemoryAllocator::FreeDedicated( m_device, m_depth.memory );
+    m_depth = {};
 }
 
 void RTGL1::Fluid::DestroyPipelines()

@@ -616,15 +616,6 @@ std::tuple< VkImage, VkImageView, VkFormat, VkExtent2D > Framebuffers::GetImageH
     return std::make_tuple( image, view, format, GetFramebufSize( resolutionState, fbImageIndex ) );
 }
 
-auto Framebuffers::GetImageForAlias( FramebufferImageIndex fbImageIndex, uint32_t frameIndex ) const
-    -> std::tuple< VkFormat, VkDeviceMemory >
-{
-    fbImageIndex = FrameIndexToFBIndex( fbImageIndex, frameIndex );
-
-    return std::make_tuple( ShFramebuffers_Formats[ fbImageIndex ],
-                            imageMemories[ fbImageIndex ] );
-}
-
 VkExtent2D RTGL1::Framebuffers::GetFramebufSize( const ResolutionState& resolutionState,
                                                  FramebufferImageIndex  index ) const
 {

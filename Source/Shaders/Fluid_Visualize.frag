@@ -31,6 +31,7 @@ layout( location = 0 ) in vec2 in_uv;
 layout( location = 1 ) in vec3 in_center;
 
 layout( location = 0 ) out uint32_t out_normal;
+layout( location = 1 ) out float out_depth;
 
 layout( push_constant ) uniform VisualizePush_T
 {
@@ -83,6 +84,8 @@ void main()
     {
         vec4 clip    = push.proj * vec4( viewSpacePos, 1.0 );
         gl_FragDepth = clip.z / clip.w;
+        // Match the depth attachment's [0, 1] range in the image used for smoothing.
+        out_depth = clamp( gl_FragDepth, 0.0, 1.0 );
     }
     {
         vec3 worldNormal = transpose( mat3( push.view ) ) * viewSpaceNormal;

@@ -106,16 +106,11 @@ private:
     void CreateRenderPass();
 
 private:
-    struct VolumeDef
+    struct DepthAttachment
     {
         VkImage        image{ VK_NULL_HANDLE };
         VkImageView    view{ VK_NULL_HANDLE };
         VkDeviceMemory memory{ VK_NULL_HANDLE };
-    };
-    struct AliasedDef
-    {
-        VkImage     image{ VK_NULL_HANDLE };
-        VkImageView view{ VK_NULL_HANDLE };
     };
 
 private:
@@ -123,6 +118,7 @@ private:
 
     std::shared_ptr< Framebuffers >         m_storageFramebuffer{};
     std::shared_ptr< CommandBufferManager > m_cmdManager{};
+    std::shared_ptr< MemoryAllocator >      m_allocator{};
 
     Buffer     m_particlesArray{};
     AutoBuffer m_generateIdToSource;
@@ -146,7 +142,7 @@ private:
     VkPipelineLayout m_smoothPipelineLayout{ VK_NULL_HANDLE };
     VkPipeline       m_smoothPipelines[ 2 ]{};
 
-    AliasedDef m_depth{};
+    DepthAttachment m_depth{};
 
     RingBuf m_active{};
 
