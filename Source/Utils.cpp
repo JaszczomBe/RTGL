@@ -30,25 +30,31 @@
 
 using namespace RTGL1;
 
-auto Utils::FindBinFolder() -> std::filesystem::path
+auto Utils::GetModuleDirectory() -> std::filesystem::path
 {
-    std::filesystem::path rtglDllPath;
+    std::filesystem::path rtglModulePath;
 
 #if defined( _WIN32 )
     wchar_t path[ MAX_PATH ]{};
     GetModuleFileNameW( GetModuleHandle( RG_LIBRARY_NAME ), path, MAX_PATH );
-    rtglDllPath = path;
+    rtglModulePath = path;
 #elif defined( __linux__ )
     Dl_info dl_info{};
-    if( dladdr( reinterpret_cast< void* >( &Utils::FindBinFolder ), &dl_info ) )
+    if( dladdr( reinterpret_cast< void* >( &Utils::GetModuleDirectory ), &dl_info ) )
     {
         if( dl_info.dli_fname )
         {
-            rtglDllPath = dl_info.dli_fname;
+            rtglModulePath = dl_info.dli_fname;
         }
     }
 #endif
-    auto binFolder = rtglDllPath.parent_path();
+    return rtglModulePath.parent_path();
+}
+
+#if defined( _WIN32 )
+auto Utils::FindBinFolder() -> std::filesystem::path
+{
+    auto binFolder = GetModuleDirectory();
     if( binFolder.filename() == "debug" )
     {
         binFolder = binFolder.parent_path();
@@ -56,6 +62,7 @@ auto Utils::FindBinFolder() -> std::filesystem::path
     assert( binFolder.filename() == "bin" );
     return binFolder;
 }
+#endif
 
 void Utils::BarrierImage( VkCommandBuffer                cmd,
                           VkImage                        image,

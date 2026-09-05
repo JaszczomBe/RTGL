@@ -120,8 +120,11 @@ using Float4D  = FloatStorage< 4 >;
 
 namespace Utils
 {
-    // Path to the folder containing .dll / .so
+    auto GetModuleDirectory() -> std::filesystem::path;
+
+#if defined( _WIN32 )
     auto FindBinFolder() -> std::filesystem::path;
+#endif
 
     void BarrierImage( VkCommandBuffer                cmd,
                        VkImage                        image,
